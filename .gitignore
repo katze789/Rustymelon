@@ -1,0 +1,41 @@
+# --- Upstream clones (reference / build inputs, not part of this repo) ---
+# rustymelon is a set of Rust modules + a patch; the upstream sources are
+# fetched at build time, not vendored here.
+/melonDS/
+/melonds-ds/
+
+# --- Binaries: never commit built cores or the stock cores ---
+# (GPL allows binary distribution only alongside corresponding source; we ship
+#  source + a build script instead, so keep all binaries out of the tree.)
+/original-cores-backup/
+custom-core/*.dll
+custom-core/*.info
+*.dll
+*.a
+*.exe
+*.lib
+*.so
+*.dylib
+
+# --- Generated benchmark output ---
+/benchmarks/results/
+
+# --- Local machine config (has private ROM paths); ship suite.cfg.example ---
+/benchmarks/suite.cfg
+
+# --- Rust build artifacts (target dir is on E:\ anyway, but just in case) ---
+target/
+**/target/
+Cargo.lock
+
+# --- RAM snapshots / scratch ---
+*.bin
+*.output
+
+# --- OS / editor noise ---
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+.vscode/
+.idea/

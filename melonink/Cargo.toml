@@ -1,0 +1,20 @@
+[package]
+name = "melonink"
+version = "0.1.0"
+edition = "2021"
+description = "Bit-exact Rust replacements for hot melonDS scanline paths, exposed over a C ABI"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+# std is only used by the test harness; the production staticlib is built
+# with --no-default-features (no_std, panic=abort).
+default = ["std"]
+std = []
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

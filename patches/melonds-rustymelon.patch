@@ -1,0 +1,324 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 1f947d11..4c8d5ec9 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -202,3 +202,11 @@ endif()
+ #  )
+ #endif()
+ 
++
++# melonink: optional Rust staticlib replacing hot scanline paths (set
++# MELONINK_LIB to the libmelonink.a path to enable).
++if (MELONINK_LIB)
++    message(STATUS "melonink enabled: ${MELONINK_LIB}")
++    target_compile_definitions(core PRIVATE MELONINK)
++    target_link_libraries(core PRIVATE "${MELONINK_LIB}")
++endif()
+diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
+index 6ad2cd3e..fac534f6 100644
+--- a/src/GPU2D_Soft.cpp
++++ b/src/GPU2D_Soft.cpp
+@@ -20,6 +20,39 @@
+ #include "GPU.h"
+ #include "GPU3D.h"
+ 
++#ifdef MELONINK
++// Rust replacements (melonink crate). Bit-exact; gated by stream-hash + RAM
++// verification.
++extern "C" void melonink_composite_scanline(
++    melonDS::u32* bgobj_line, const melonDS::u8* window_mask,
++    melonDS::u32 blend_cnt, melonDS::u32 eva, melonDS::u32 evb, melonDS::u32 evy);
++
++// Layout MUST match melonink::bg::BgTextParams (repr(C)) exactly.
++struct MeloninkBgTextParams {
++    const melonDS::u8* bgvram;
++    const melonDS::u16* pal;
++    const melonDS::u8* window_mask;
++    melonDS::u32* bgobj_line;
++    const melonDS::u8* mosaic_table;
++    const melonDS::u16* extpal_ptrs[16];
++    melonDS::u32 bgvrammask, bgnum, xoff, yoff, tilesetaddr, tilemapaddr, widexmask;
++    melonDS::u8 is_256, extpal, mosaic, accel;
++};
++extern "C" void melonink_drawbg_text(const MeloninkBgTextParams* p);
++
++// Layout MUST match melonink::sprite::SpriteParams (repr(C)) exactly.
++struct MeloninkSpriteParams {
++    const melonDS::u8* objvram;
++    melonDS::u32* obj_line;
++    melonDS::u8* obj_window;
++    melonDS::u32 objvrammask, disp_cnt, attrib0, attrib1, attrib2;
++    melonDS::s32 rot_a, rot_b, rot_c, rot_d;
++    melonDS::s32 width, height, boundwidth, boundheight, xpos, ypos;
++    melonDS::u8 window, rotscale, _pad0, _pad1;
++};
++extern "C" void melonink_draw_sprite(const MeloninkSpriteParams* p);
++#endif
++
+ namespace melonDS
+ {
+ namespace GPU2D
+@@ -741,6 +774,10 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+ 
+     if (!GPU.GPU3D.IsRendererAccelerated())
+     {
++#ifdef MELONINK
++        melonink_composite_scanline(BGOBJLine, WindowMask,
++            CurUnit->BlendCnt, CurUnit->EVA, CurUnit->EVB, CurUnit->EVY);
++#else
+         for (int i = 0; i < 256; i++)
+         {
+             u32 val1 = BGOBJLine[i];
+@@ -748,6 +785,7 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+ 
+             BGOBJLine[i] = ColorComposite(i, val1, val2);
+         }
++#endif
+     }
+     else
+     {
+@@ -962,6 +1000,31 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
+     else
+         tilemapaddr += ((yoff & 0xF8) << 3);
+ 
++#ifdef MELONINK
++    {
++        MeloninkBgTextParams bp;
++        bp.bgvram = bgvram;
++        bp.pal = pal;
++        bp.window_mask = WindowMask;
++        bp.bgobj_line = BGOBJLine;
++        bp.mosaic_table = CurBGXMosaicTable;
++        for (int pi = 0; pi < 16; pi++)
++            bp.extpal_ptrs[pi] = extpal ? CurUnit->GetBGExtPal(extpalslot, pi) : pal;
++        bp.bgvrammask = bgvrammask;
++        bp.bgnum = bgnum;
++        bp.xoff = xoff;
++        bp.yoff = yoff;
++        bp.tilesetaddr = tilesetaddr;
++        bp.tilemapaddr = tilemapaddr;
++        bp.widexmask = widexmask;
++        bp.is_256 = (bgcnt & 0x0080) ? 1 : 0;
++        bp.extpal = extpal ? 1 : 0;
++        bp.mosaic = mosaic ? 1 : 0;
++        bp.accel = (drawPixel == &SoftRenderer::DrawPixel_Accel) ? 1 : 0;
++        melonink_drawbg_text(&bp);
++        return;
++    }
++#else
+     u16 curtile;
+     u16* curpal;
+     u32 pixelsaddr;
+@@ -1073,6 +1136,7 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
+             xoff++;
+         }
+     }
++#endif
+ }
+ 
+ template<bool mosaic, SoftRenderer::DrawPixel drawPixel>
+@@ -1723,6 +1787,31 @@ void SoftRenderer::DrawSprite_Rotscale(u32 num, u32 boundwidth, u32 boundheight,
+     u32 objvrammask;
+     CurUnit->GetOBJVRAM(objvram, objvrammask);
+ 
++#ifdef MELONINK
++    {
++        MeloninkSpriteParams sp;
++        sp.objvram = objvram;
++        sp.obj_line = OBJLine[CurUnit->Num];
++        sp.obj_window = OBJWindow[CurUnit->Num];
++        sp.objvrammask = objvrammask;
++        sp.disp_cnt = CurUnit->DispCnt;
++        sp.attrib0 = attrib[0]; sp.attrib1 = attrib[1]; sp.attrib2 = attrib[2];
++        sp.rot_a = (s16)rotparams[0];
++        sp.rot_b = (s16)rotparams[4];
++        sp.rot_c = (s16)rotparams[8];
++        sp.rot_d = (s16)rotparams[12];
++        sp.width = width; sp.height = height;
++        sp.boundwidth = boundwidth; sp.boundheight = boundheight;
++        sp.xpos = xpos; sp.ypos = ypos;
++        sp.window = window ? 1 : 0;
++        sp.rotscale = 1;
++        sp._pad0 = 0; sp._pad1 = 0;
++        (void)pixelattr; (void)tilenum; (void)spritemode; (void)ytilefactor;
++        melonink_draw_sprite(&sp);
++        return;
++    }
++#endif
++
+     u32* objLine = OBJLine[CurUnit->Num];
+     u8* objWindow = OBJWindow[CurUnit->Num];
+ 
+@@ -1940,6 +2029,28 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
+     u32 objvrammask;
+     CurUnit->GetOBJVRAM(objvram, objvrammask);
+ 
++#ifdef MELONINK
++    {
++        MeloninkSpriteParams sp;
++        sp.objvram = objvram;
++        sp.obj_line = OBJLine[CurUnit->Num];
++        sp.obj_window = OBJWindow[CurUnit->Num];
++        sp.objvrammask = objvrammask;
++        sp.disp_cnt = CurUnit->DispCnt;
++        sp.attrib0 = attrib[0]; sp.attrib1 = attrib[1]; sp.attrib2 = attrib[2];
++        sp.rot_a = 0; sp.rot_b = 0; sp.rot_c = 0; sp.rot_d = 0;
++        sp.width = (s32)width; sp.height = (s32)height;
++        sp.boundwidth = 0; sp.boundheight = 0;
++        sp.xpos = xpos; sp.ypos = ypos;
++        sp.window = window ? 1 : 0;
++        sp.rotscale = 0;
++        sp._pad0 = 0; sp._pad1 = 0;
++        (void)pixelattr; (void)tilenum; (void)spritemode; (void)wmask;
++        melonink_draw_sprite(&sp);
++        return;
++    }
++#endif
++
+     u32* objLine = OBJLine[CurUnit->Num];
+     u8* objWindow = OBJWindow[CurUnit->Num];
+ 
+diff --git a/src/GPU3D_Soft.cpp b/src/GPU3D_Soft.cpp
+index a9d0bd64..faf00e3c 100644
+--- a/src/GPU3D_Soft.cpp
++++ b/src/GPU3D_Soft.cpp
+@@ -24,6 +24,40 @@
+ #include "NDS.h"
+ #include "GPU.h"
+ 
++#ifdef MELONINK
++// Rust ports (melonink crate). Bit-exact; gated by the video/audio/RAM
++// hash-equivalence checks.
++extern "C" void melonink_texture_lookup(
++    const melonDS::u8* tex, const melonDS::u8* pal,
++    melonDS::u32 texparam, melonDS::u32 texpal,
++    melonDS::s16 s, melonDS::s16 t,
++    melonDS::u16* out_color, melonDS::u8* out_alpha);
++extern "C" melonDS::u32 melonink_render_pixel(
++    const melonDS::u8* tex, const melonDS::u8* pal,
++    melonDS::u32 poly_attr, melonDS::u32 tex_param, melonDS::u32 tex_palette,
++    melonDS::u32 disp_cnt, const melonDS::u16* toon_table,
++    melonDS::u8 vr, melonDS::u8 vg, melonDS::u8 vb,
++    melonDS::s16 s, melonDS::s16 t);
++
++// Layout MUST match melonink::rasterizer::SpanParams (repr(C)) exactly.
++struct MeloninkSpanParams {
++    melonDS::u32* color_buffer;
++    melonDS::u32* depth_buffer;
++    melonDS::u32* attr_buffer;
++    const melonDS::u8* stencil_buffer;
++    const melonDS::u8* tex;
++    const melonDS::u8* pal;
++    const melonDS::u16* toon_table;
++    melonDS::s32 buffer_size, scanline_width, first_pixel_offset, y;
++    melonDS::s32 xstart, xend, wl, wr, zl, zr;
++    melonDS::s32 rl, gl, bl, sl, tl, rr, gr, br, sr, tr;
++    melonDS::s32 l_edgelen, r_edgelen, l_edgecov, r_edgecov, yedge;
++    melonDS::u8 l_filledge, r_filledge, wireframe, is_shadow, wbuffer, depth_test_mode, _pad0, _pad1;
++    melonDS::u32 poly_attr, poly_attr_full, tex_param, tex_palette, disp_cnt, alpha_ref;
++};
++extern "C" void melonink_render_spans(const MeloninkSpanParams* p);
++#endif
++
+ namespace melonDS
+ {
+ 
+@@ -140,6 +174,11 @@ void SoftRenderer::SetThreaded(bool threaded, GPU& gpu) noexcept
+ 
+ void SoftRenderer::TextureLookup(const GPU& gpu, u32 texparam, u32 texpal, s16 s, s16 t, u16* color, u8* alpha) const
+ {
++#ifdef MELONINK
++    melonink_texture_lookup(gpu.VRAMFlat_Texture, gpu.VRAMFlat_TexPal,
++        texparam, texpal, s, t, color, alpha);
++    return;
++#else
+     u32 vramaddr = (texparam & 0xFFFF) << 3;
+ 
+     s32 width = 8 << ((texparam >> 20) & 0x7);
+@@ -369,6 +408,7 @@ void SoftRenderer::TextureLookup(const GPU& gpu, u32 texparam, u32 texpal, s16 s
+         }
+         break;
+     }
++#endif // MELONINK
+ }
+ 
+ // depth test is 'less or equal' instead of 'less than' under the following conditions:
+@@ -453,6 +493,12 @@ u32 SoftRenderer::AlphaBlend(const GPU3D& gpu3d, u32 srccolor, u32 dstcolor, u32
+ 
+ u32 SoftRenderer::RenderPixel(const GPU& gpu, const Polygon* polygon, u8 vr, u8 vg, u8 vb, s16 s, s16 t) const
+ {
++#ifdef MELONINK
++    return melonink_render_pixel(gpu.VRAMFlat_Texture, gpu.VRAMFlat_TexPal,
++        polygon->Attr, polygon->TexParam, polygon->TexPalette,
++        gpu.GPU3D.RenderDispCnt, gpu.GPU3D.RenderToonTable,
++        vr, vg, vb, s, t);
++#else
+     u8 r, g, b, a;
+ 
+     u32 blendmode = (polygon->Attr >> 4) & 0x3;
+@@ -557,6 +603,7 @@ u32 SoftRenderer::RenderPixel(const GPU& gpu, const Polygon* polygon, u8 vr, u8
+     if (wireframe) a = 31;
+ 
+     return r | (g << 8) | (b << 16) | (a << 24);
++#endif // MELONINK
+ }
+ 
+ void SoftRenderer::PlotTranslucentPixel(const GPU3D& gpu3d, u32 pixeladdr, u32 color, u32 z, u32 polyattr, u32 shadow)
+@@ -1090,6 +1137,49 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
+     else if (y == polygon->YBottom-1) yedge = 0x8;
+     int edge;
+ 
++#ifdef MELONINK
++    {
++        melonDS::u8 dtmode;
++        if (polygon->Attr & (1<<14)) dtmode = polygon->WBuffer ? 1 : 0; // Equal_W : Equal_Z
++        else if (polygon->FacingView) dtmode = 3;                       // LessThan_FrontFacing
++        else dtmode = 2;                                                // LessThan
++
++        MeloninkSpanParams sp;
++        sp.color_buffer = ColorBuffer;
++        sp.depth_buffer = DepthBuffer;
++        sp.attr_buffer = AttrBuffer;
++        sp.stencil_buffer = StencilBuffer;
++        sp.tex = gpu.VRAMFlat_Texture;
++        sp.pal = gpu.VRAMFlat_TexPal;
++        sp.toon_table = gpu.GPU3D.RenderToonTable;
++        sp.buffer_size = BufferSize;
++        sp.scanline_width = ScanlineWidth;
++        sp.first_pixel_offset = FirstPixelOffset;
++        sp.y = y;
++        sp.xstart = xstart; sp.xend = xend;
++        sp.wl = wl; sp.wr = wr; sp.zl = zl; sp.zr = zr;
++        sp.rl = rl; sp.gl = gl; sp.bl = bl; sp.sl = sl; sp.tl = tl;
++        sp.rr = rr; sp.gr = gr; sp.br = br; sp.sr = sr; sp.tr = tr;
++        sp.l_edgelen = l_edgelen; sp.r_edgelen = r_edgelen;
++        sp.l_edgecov = l_edgecov; sp.r_edgecov = r_edgecov;
++        sp.yedge = yedge;
++        sp.l_filledge = l_filledge ? 1 : 0;
++        sp.r_filledge = r_filledge ? 1 : 0;
++        sp.wireframe = wireframe ? 1 : 0;
++        sp.is_shadow = polygon->IsShadow ? 1 : 0;
++        sp.wbuffer = polygon->WBuffer ? 1 : 0;
++        sp.depth_test_mode = dtmode;
++        sp._pad0 = 0; sp._pad1 = 0;
++        sp.poly_attr = polyattr;
++        sp.poly_attr_full = polygon->Attr;
++        sp.tex_param = polygon->TexParam;
++        sp.tex_palette = polygon->TexPalette;
++        sp.disp_cnt = gpu.GPU3D.RenderDispCnt;
++        sp.alpha_ref = gpu.GPU3D.RenderAlphaRef;
++        (void)edge; (void)fnDepthTest;
++        melonink_render_spans(&sp);
++    }
++#else
+     s32 x = xstart;
+     Interpolator<0> interpX(xstart, xend+1, wl, wr);
+ 
+@@ -1386,6 +1476,7 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
+                 PlotTranslucentPixel(gpu.GPU3D, pixeladdr+BufferSize, color, z, polyattr, polygon->IsShadow);
+         }
+     }
++#endif // MELONINK
+ 
+     rp->XL = rp->SlopeL.Step();
+     rp->XR = rp->SlopeR.Step();

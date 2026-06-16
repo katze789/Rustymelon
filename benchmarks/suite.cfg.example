@@ -1,0 +1,26 @@
+# melonbench suite configuration — copy to suite.cfg and edit the paths.
+# Lines: `core <label>=<path>`, `game <label>=<path>[ ; flags]`, `<key> <value>`,
+# or # comments.  (suite.cfg itself is gitignored because it holds local paths.)
+
+# Cores to compare. "original" = the stock buildbot DLL; "baseline" = your build
+# of unmodified source (MELONINK off); "rusty" = the build with melonink linked.
+core original=C:\path\to\original\melondsds_libretro.dll
+core baseline=C:\path\to\build\baseline\melondsds_libretro.dll
+core rusty=C:\path\to\build\rusty\melondsds_libretro.dll
+
+# Test ROMs (dump your own legally-owned cartridges). Per-game flags after ';'
+# handle ROMs whose STOCK-core output is itself nondeterministic run-to-run:
+#   frames=N        cap strict-hash runs to N frames
+#   audio_nondet    exclude audio from the equivalence gate
+#   video_nondet    exclude video from the equivalence gate
+#   ram_nondet      main RAM too nondeterministic for byte-level ramverify
+game game-3d=C:\path\to\some_3d_game.nds
+game game-2d=C:\path\to\some_2d_game.nds
+game flaky-wifi-game=C:\path\to\online_game.nds ; frames=500
+
+# Sandbox dirs (copies of BIOS/firmware + a scratch save dir — never your real
+# RetroArch system folder, so benchmarks can't touch real saves).
+system_dir C:\path\to\bench-sandbox\system
+save_dir C:\path\to\bench-sandbox\saves
+opt_file C:\path\to\RetroArch\config\melonDS DS\melonDS DS.opt
+results_dir .\benchmarks\results
