@@ -71,6 +71,7 @@ scanline per call.
 | `RenderPolygonScanline` per-pixel span loop | `GPU3D_Soft.cpp` | the three span loops + `Interpolator<0>`, the 4 depth tests, `AlphaBlend`, `PlotTranslucentPixel`. Called once per scanline (`melonink_render_spans`), so texture/render-pixel run with no per-pixel FFI hop. |
 | `GPU2D::SoftRenderer::DrawBG_Text` pixel loops | `GPU2D_Soft.cpp` | 256/16-colour text-BG drawing (mosaic + ext-palette + both DrawPixel variants). VRAM-bank setup (`GetBGVRAM`/`GetBGExtPal`) stays in C++; the 16 ext-palette pointers are precomputed and passed in. |
 | `GPU2D::SoftRenderer::DrawSprite_Normal` + `DrawSprite_Rotscale` | `GPU2D_Soft.cpp` | full sprite rendering: bitmap / 256-colour / 16-colour, normal + affine (rotscale), window sprites, both flips, mosaic. Writes raw indices to `OBJLine`/`OBJWindow` (palette lookup stays in C++ `InterleaveSprites`); VRAM coherency + OAM iteration stay in C++. |
+| `GPU2D::SoftRenderer::DrawBG_Affine` + `DrawBG_Extended` + `DrawBG_Large` | `GPU2D_Soft.cpp` | affine/extended/large background pixel loops (affine-tiled, extended bitmap direct/256-colour, extended mixed affine/text with ext-palette, large 256-colour). One Rust entry point dispatched by mode; the `BGxRefInternal` advance stays in C++. |
 
 Each is exercised behind `#ifdef MELONINK` and verified per `VERIFICATION.md`.
 The per-scanline setup (slope/edge setup, Y-interpolation of span endpoints)

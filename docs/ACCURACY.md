@@ -54,7 +54,18 @@ e.g. NSMB, which needs touch input to begin):
 | MKDS — deep, into a race (item roulette + Lakitu = affine sprites) | 2600 | yes (2/2 identical) | ✔ |
 
 This is how the sprite port was validated for the rotscale/affine path, which the
-intros alone don't reach.
+intros alone don't reach. The same MKDS-into-a-race test also exercises the
+**affine background** (the in-race minimap), validating the `DrawBG_Affine` port;
+it is deterministic stock-vs-stock and rusty matches exactly.
+
+### Renderer coverage note
+
+With `DrawBG_Affine`/`DrawBG_Extended`/`DrawBG_Large` ported, the **entire 2D+3D
+software-renderer pixel pipeline is in Rust**. The distinct core identity
+(`library_name = "rustymelon DS"`) is purely a reported string and does not
+affect emulation — re-verified bit-identical after that change. The rarely-hit
+extended/large *bitmap* BG modes pass wherever the 8-game matrix exercises them;
+broader targeted coverage of those is listed in ROADMAP.md.
 
 (Table reflects the latest sweep; the suite writes timestamped JSON to
 `benchmarks/results/verify-*`.)

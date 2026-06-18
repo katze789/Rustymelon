@@ -20,10 +20,15 @@ function ToPosix([string]$p) { ($p -replace '\\','/' -replace '^([A-Za-z]):','/$
 
 New-Item -ItemType Directory -Force $WorkDir | Out-Null
 
-# 1. Fetch melonds-ds (the libretro core) and the pinned melonDS, apply the patch.
+# 1. Fetch melonds-ds (the libretro core) and the pinned melonDS, apply patches.
 $mdsds = "$WorkDir\melonds-ds"
 if (-not (Test-Path $mdsds)) {
     git clone --recursive --depth 1 https://github.com/JesseTG/melonds-ds $mdsds
+    if (-not $Baseline) {
+        # rustymelon identity patch (distinct core name; only for the rusty build)
+        git -C $mdsds apply "$repo\patches\melonds-ds-rustymelon.patch"
+        Write-Host "Applied patches/melonds-ds-rustymelon.patch (distinct rustymelon identity)"
+    }
 }
 $melon = "$WorkDir\melonDS-patched"
 if (-not (Test-Path $melon)) {

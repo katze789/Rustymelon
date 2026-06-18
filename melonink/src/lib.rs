@@ -27,6 +27,7 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 extern "C" fn rust_eh_personality() {}
 
 mod bg;
+mod bg_affine;
 mod composite;
 mod rasterizer;
 mod renderpixel;

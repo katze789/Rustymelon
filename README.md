@@ -14,11 +14,12 @@ This is **not** a fork of the whole emulator. It is a small set of Rust modules
 off.
 
 > [!IMPORTANT]
-> **Custom / practice build.** This is not an officially-approved RetroAchievements
-> core. Do not use it for Hardcore sessions or submitted speedruns unless RA / the
-> relevant moderators have approved it. It installs *alongside* the stock core,
-> never replacing it. See [docs/LOCAL-ONLY.md](docs/LOCAL-ONLY.md) and the
-> RetroAchievements section below.
+> **Custom build — not RetroAchievements-approved.** rustymelon reports its **own
+> distinct core identity** (`rustymelon DS`), specifically so it can never be
+> mistaken for — or accepted in place of — the approved `melonDS DS` core. That
+> means RetroAchievements Hardcore will (correctly) not accept it. It installs
+> *alongside* the stock core, never replacing it. Use the stock core for anything
+> that counts. See [docs/RETROACHIEVEMENTS.md](docs/RETROACHIEVEMENTS.md).
 
 ## Status
 
@@ -29,11 +30,14 @@ Ported to Rust so far (each bit-identical to upstream, verified — see below):
 | 2D colour-effect compositor | `GPU2D::SoftRenderer::ColorComposite` scanline loop (AVX2 + scalar) |
 | 2D text backgrounds | `GPU2D::SoftRenderer::DrawBG_Text` pixel loops |
 | 2D sprites | `GPU2D::SoftRenderer::DrawSprite_Normal` + `DrawSprite_Rotscale` (bitmap / 256 / 16-colour, affine, window, flips, mosaic) |
+| 2D affine/extended/large backgrounds | `GPU2D::SoftRenderer::DrawBG_Affine` + `DrawBG_Extended` + `DrawBG_Large` |
 | 3D texture sampling | `GPU3D::SoftRenderer::TextureLookup` (all 8 NDS formats) |
 | 3D pixel shading | `GPU3D::SoftRenderer::RenderPixel` |
 | 3D rasterizer span loop | `RenderPolygonScanline` per-pixel loops + interpolator, depth tests, alpha blend, translucent plot |
 
-**Every prominent hot path of the software renderer is now in Rust.**
+**The entire 2D and 3D software-renderer pixel pipeline is now in Rust.** What
+remains in C++ is non-rendering (CPU JIT, audio, threading) or by-design
+per-scanline setup.
 
 **Performance** (median, stable clocks, on an i5-8250U laptop): all test games
 improve, with notably smoother frame pacing — e.g. MKDS +13.5 % (P99 frame time

@@ -1,0 +1,42 @@
+diff --git a/src/libretro/CMakeLists.txt b/src/libretro/CMakeLists.txt
+index dad8a37..aaeedc8 100644
+--- a/src/libretro/CMakeLists.txt
++++ b/src/libretro/CMakeLists.txt
+@@ -163,6 +163,13 @@ embed_binaries(libretro-assets
+ 
+ add_common_definitions(melondsds_libretro)
+ 
++# rustymelon: when the melonink Rust staticlib is linked into the inner core,
++# also define MELONINK for this libretro wrapper so it reports the distinct
++# rustymelon identity (see retro_get_system_info in libretro.cpp).
++if (MELONINK_LIB)
++    target_compile_definitions(melondsds_libretro PRIVATE MELONINK)
++endif ()
++
+ if (ENABLE_THREADED_RENDERER)
+     target_compile_definitions(melondsds_libretro PUBLIC ENABLE_THREADED_RENDERER HAVE_THREADED_RENDERER)
+ endif ()
+diff --git a/src/libretro/libretro.cpp b/src/libretro/libretro.cpp
+index c38d23e..f1ffdd5 100644
+--- a/src/libretro/libretro.cpp
++++ b/src/libretro/libretro.cpp
+@@ -169,9 +169,18 @@ PUBLIC_SYMBOL unsigned retro_api_version(void) {
+ }
+ 
+ PUBLIC_SYMBOL void retro_get_system_info(struct retro_system_info *info) {
++#ifdef MELONINK
++    // rustymelon is a distinct fork: it reports its OWN name/version so it can
++    // never be mistaken for — or accepted in place of — the official,
++    // RetroAchievements-approved "melonDS DS" core. (Save/system subdirectories
++    // still use MELONDSDS_NAME below for file compatibility with melonDS DS.)
++    info->library_name = "rustymelon DS";
++    info->library_version = "0.1.0 (rust; melonDS DS " MELONDSDS_VERSION ")";
++#else
+     info->library_name = MELONDSDS_NAME;
+-    info->block_extract = false;
+     info->library_version = MELONDSDS_VERSION;
++#endif
++    info->block_extract = false;
+     info->need_fullpath = false;
+     info->valid_extensions = "nds|ids|dsi";
+ }

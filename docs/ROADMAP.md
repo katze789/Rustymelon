@@ -22,6 +22,13 @@ the game matrix, and the RA-RAM proof where the ROM permits it.
   - GPU2D `DrawBG_Text` pixel loops — 256/16-colour text BG (mosaic + ext-pal).
   - GPU2D `DrawSprite_Normal` + `DrawSprite_Rotscale` — full sprite rendering
     (bitmap / 256 / 16-colour, affine, window, flips, mosaic).
+  - GPU2D `DrawBG_Affine` + `DrawBG_Extended` + `DrawBG_Large` — affine/extended/
+    large background modes. **With this, the entire 2D+3D software-renderer pixel
+    pipeline is in Rust.**
+- **Distinct fork identity.** The build reports `library_name = "rustymelon DS"`
+  (guarded by `#ifdef MELONINK`), so it cannot be mistaken for the approved
+  `melonDS DS` core and RetroAchievements Hardcore correctly refuses it. The
+  identity change is a separate small patch (`patches/melonds-ds-rustymelon.patch`).
 - **Verification infrastructure.** Video+audio+save-RAM stream gate; RA-visible
   main-RAM proof via masked snapshots; input-driven gameplay tests; documented
   ROM-determinism caveats.
@@ -47,29 +54,30 @@ renderer, the hot path is now Rust:
 | `render_pixel` | 4.6 % | 5.2 % | Rust ✓ |
 | `DrawBG_Text` | 4.9 % | 5.0 % | Rust ✓ |
 | `DrawSprite_Normal` / `_Rotscale` | 5.3 % | 5.5 % | Rust ✓ |
+| `DrawBG_Affine` / `_Extended` / `_Large` | small | small | Rust ✓ |
 | `RenderPolygonScanline` (per-scanline setup) | 3.2 % | 4.0 % | C++ (kept) |
 | `RenderThreadFunc` / `register_frame_ctor` | ~10 % | ~9 % | threading/overhead — not productively portable |
 | `SPUChannel::Run` | — | 3.3 % | C++ audio (sensitive; out of scope) |
 | ARM JIT `Execute` | (in "other" ~73 %) | | **off-limits** (CPU/timing → RA risk) |
 
-**Every prominent renderer hot path is now in Rust.** What remains in C++ is the
-once-per-scanline setup (kept by design), threading/overhead that can't be
-meaningfully ported, audio, and the ARM JIT (off-limits). The sprite port —
-including the affine `DrawSprite_Rotscale` path — was validated with input-driven
-gameplay tests on top of the usual gate (see ACCURACY.md).
+**The entire 2D+3D software-renderer pixel pipeline is now in Rust.** What remains
+in C++ is the once-per-scanline setup (kept by design), threading/overhead that
+can't be meaningfully ported, audio, and the ARM JIT (off-limits). The sprite and
+affine-BG ports were validated with input-driven gameplay tests (e.g. the MKDS
+in-race affine minimap) on top of the usual gate (see ACCURACY.md).
 
 ## Next (optional; diminishing returns)
 
-1. **Widen the differential net.** A true C++-oracle differential for
-   `TextureLookup`/`RenderPixel`/sprites (compile the upstream function standalone
-   and fuzz Rust against it), beyond the current independent-reference fuzz +
-   real-game gate.
+1. **Widen the differential net.** A true C++-oracle differential for the ported
+   functions (compile the upstream function standalone and fuzz Rust against it),
+   beyond the current independent-reference fuzz + real-game gate.
 
 2. **Broaden game/input coverage further.** More titles and scripted input paths
-   that reach varied in-game states (the sprite port showed intros under-cover
-   some modes). The minor remaining 2D-BG variants (`DrawBG_Affine`,
-   `DrawBG_Extended`, `DrawBG_Large`) could be ported too, but they are rare and
-   low-value.
+   that reach varied in-game states — especially the rarely-hit extended/large
+   bitmap BG modes, which intros under-cover.
+
+3. **Upstream / C++ reimplementation.** See RETROACHIEVEMENTS.md — the path with a
+   real chance of a legitimately-approved, shipping result.
 
 3. **Upstream the patch** (see RETROACHIEVEMENTS.md) — the highest-value next
    step if the goal is an approved, shipping optimisation.

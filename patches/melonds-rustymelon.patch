@@ -15,10 +15,10 @@ index 1f947d11..4c8d5ec9 100644
 +    target_link_libraries(core PRIVATE "${MELONINK_LIB}")
 +endif()
 diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
-index 6ad2cd3e..fac534f6 100644
+index 6ad2cd3e..6f2f5536 100644
 --- a/src/GPU2D_Soft.cpp
 +++ b/src/GPU2D_Soft.cpp
-@@ -20,6 +20,39 @@
+@@ -20,6 +20,60 @@
  #include "GPU.h"
  #include "GPU3D.h"
  
@@ -53,12 +53,33 @@ index 6ad2cd3e..fac534f6 100644
 +    melonDS::u8 window, rotscale, _pad0, _pad1;
 +};
 +extern "C" void melonink_draw_sprite(const MeloninkSpriteParams* p);
++
++// Layout MUST match melonink::bg_affine::BgAffineParams (repr(C)) exactly.
++struct MeloninkBgAffineParams {
++    const melonDS::u8* bgvram;
++    const melonDS::u16* pal;
++    const melonDS::u8* window_mask;
++    melonDS::u32* bgobj_line;
++    const melonDS::u8* mosaic_table;
++    const melonDS::u16* extpal_ptrs[16];
++    melonDS::u32 bgvrammask, bgnum, mode, tileset_addr, tilemap_addr;
++    melonDS::u32 mask_x, mask_y, yshift, ovmask_x, ovmask_y;
++    melonDS::s32 rot_x, rot_y, rot_a, rot_c;
++    melonDS::u8 mosaic, accel, extpal, _pad;
++};
++extern "C" void melonink_drawbg_affine(const MeloninkBgAffineParams* p);
++// rustymelon mode constants
++#define MELONINK_BGA_AFFINE_TILED 0
++#define MELONINK_BGA_EXT_BITMAP_DIRECT 1
++#define MELONINK_BGA_EXT_BITMAP_256 2
++#define MELONINK_BGA_EXT_MIXED 3
++#define MELONINK_BGA_LARGE_256 4
 +#endif
 +
  namespace melonDS
  {
  namespace GPU2D
-@@ -741,6 +774,10 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -741,6 +795,10 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  
      if (!GPU.GPU3D.IsRendererAccelerated())
      {
@@ -69,7 +90,7 @@ index 6ad2cd3e..fac534f6 100644
          for (int i = 0; i < 256; i++)
          {
              u32 val1 = BGOBJLine[i];
-@@ -748,6 +785,7 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -748,6 +806,7 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  
              BGOBJLine[i] = ColorComposite(i, val1, val2);
          }
@@ -77,7 +98,7 @@ index 6ad2cd3e..fac534f6 100644
      }
      else
      {
-@@ -962,6 +1000,31 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
+@@ -962,6 +1021,31 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
      else
          tilemapaddr += ((yoff & 0xF8) << 3);
  
@@ -109,7 +130,7 @@ index 6ad2cd3e..fac534f6 100644
      u16 curtile;
      u16* curpal;
      u32 pixelsaddr;
-@@ -1073,6 +1136,7 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
+@@ -1073,6 +1157,7 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
              xoff++;
          }
      }
@@ -117,7 +138,163 @@ index 6ad2cd3e..fac534f6 100644
  }
  
  template<bool mosaic, SoftRenderer::DrawPixel drawPixel>
-@@ -1723,6 +1787,31 @@ void SoftRenderer::DrawSprite_Rotscale(u32 num, u32 boundwidth, u32 boundheight,
+@@ -1136,6 +1221,30 @@ void SoftRenderer::DrawBG_Affine(u32 line, u32 bgnum)
+ 
+     yshift -= 3;
+ 
++#ifdef MELONINK
++    {
++        MeloninkBgAffineParams ap;
++        ap.bgvram = bgvram; ap.pal = pal;
++        ap.window_mask = WindowMask; ap.bgobj_line = BGOBJLine;
++        ap.mosaic_table = CurBGXMosaicTable;
++        for (int pi = 0; pi < 16; pi++) ap.extpal_ptrs[pi] = pal;
++        ap.bgvrammask = bgvrammask; ap.bgnum = bgnum;
++        ap.mode = MELONINK_BGA_AFFINE_TILED;
++        ap.tileset_addr = tilesetaddr; ap.tilemap_addr = tilemapaddr;
++        ap.mask_x = coordmask; ap.mask_y = 0; ap.yshift = yshift;
++        ap.ovmask_x = overflowmask; ap.ovmask_y = 0;
++        ap.rot_x = rotX; ap.rot_y = rotY; ap.rot_a = rotA; ap.rot_c = rotC;
++        ap.mosaic = mosaic ? 1 : 0;
++        ap.accel = (drawPixel == &SoftRenderer::DrawPixel_Accel) ? 1 : 0;
++        ap.extpal = 0; ap._pad = 0;
++        (void)curtile; (void)color;
++        melonink_drawbg_affine(&ap);
++        CurUnit->BGXRefInternal[bgnum-2] += rotB;
++        CurUnit->BGYRefInternal[bgnum-2] += rotD;
++        return;
++    }
++#endif
++
+     for (int i = 0; i < 256; i++)
+     {
+         if (WindowMask[i] & (1<<bgnum))
+@@ -1241,6 +1350,30 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
+ 
+             u16 color;
+ 
++#ifdef MELONINK
++            {
++                MeloninkBgAffineParams ap;
++                ap.bgvram = bgvram; ap.pal = (u16*)&GPU.Palette[CurUnit->Num ? 0x400 : 0];
++                ap.window_mask = WindowMask; ap.bgobj_line = BGOBJLine;
++                ap.mosaic_table = CurBGXMosaicTable;
++                for (int pi = 0; pi < 16; pi++) ap.extpal_ptrs[pi] = ap.pal;
++                ap.bgvrammask = bgvrammask; ap.bgnum = bgnum;
++                ap.mode = MELONINK_BGA_EXT_BITMAP_DIRECT;
++                ap.tileset_addr = 0; ap.tilemap_addr = tilemapaddr;
++                ap.mask_x = xmask; ap.mask_y = ymask; ap.yshift = yshift;
++                ap.ovmask_x = ofxmask; ap.ovmask_y = ofymask;
++                ap.rot_x = rotX; ap.rot_y = rotY; ap.rot_a = rotA; ap.rot_c = rotC;
++                ap.mosaic = mosaic ? 1 : 0;
++                ap.accel = (drawPixel == &SoftRenderer::DrawPixel_Accel) ? 1 : 0;
++                ap.extpal = 0; ap._pad = 0;
++                (void)color;
++                melonink_drawbg_affine(&ap);
++                CurUnit->BGXRefInternal[bgnum-2] += rotB;
++                CurUnit->BGYRefInternal[bgnum-2] += rotD;
++                return;
++            }
++#endif
++
+             for (int i = 0; i < 256; i++)
+             {
+                 if (WindowMask[i] & (1<<bgnum))
+@@ -1280,6 +1413,30 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
+ 
+             u8 color;
+ 
++#ifdef MELONINK
++            {
++                MeloninkBgAffineParams ap;
++                ap.bgvram = bgvram; ap.pal = pal;
++                ap.window_mask = WindowMask; ap.bgobj_line = BGOBJLine;
++                ap.mosaic_table = CurBGXMosaicTable;
++                for (int pi = 0; pi < 16; pi++) ap.extpal_ptrs[pi] = pal;
++                ap.bgvrammask = bgvrammask; ap.bgnum = bgnum;
++                ap.mode = MELONINK_BGA_EXT_BITMAP_256;
++                ap.tileset_addr = 0; ap.tilemap_addr = tilemapaddr;
++                ap.mask_x = xmask; ap.mask_y = ymask; ap.yshift = yshift;
++                ap.ovmask_x = ofxmask; ap.ovmask_y = ofymask;
++                ap.rot_x = rotX; ap.rot_y = rotY; ap.rot_a = rotA; ap.rot_c = rotC;
++                ap.mosaic = mosaic ? 1 : 0;
++                ap.accel = (drawPixel == &SoftRenderer::DrawPixel_Accel) ? 1 : 0;
++                ap.extpal = 0; ap._pad = 0;
++                (void)color;
++                melonink_drawbg_affine(&ap);
++                CurUnit->BGXRefInternal[bgnum-2] += rotB;
++                CurUnit->BGYRefInternal[bgnum-2] += rotD;
++                return;
++            }
++#endif
++
+             for (int i = 0; i < 256; i++)
+             {
+                 if (WindowMask[i] & (1<<bgnum))
+@@ -1350,6 +1507,31 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
+ 
+         yshift -= 3;
+ 
++#ifdef MELONINK
++        {
++            MeloninkBgAffineParams ap;
++            ap.bgvram = bgvram; ap.pal = pal;
++            ap.window_mask = WindowMask; ap.bgobj_line = BGOBJLine;
++            ap.mosaic_table = CurBGXMosaicTable;
++            for (int pi = 0; pi < 16; pi++)
++                ap.extpal_ptrs[pi] = extpal ? CurUnit->GetBGExtPal(bgnum, pi) : pal;
++            ap.bgvrammask = bgvrammask; ap.bgnum = bgnum;
++            ap.mode = MELONINK_BGA_EXT_MIXED;
++            ap.tileset_addr = tilesetaddr; ap.tilemap_addr = tilemapaddr;
++            ap.mask_x = coordmask; ap.mask_y = 0; ap.yshift = yshift;
++            ap.ovmask_x = overflowmask; ap.ovmask_y = 0;
++            ap.rot_x = rotX; ap.rot_y = rotY; ap.rot_a = rotA; ap.rot_c = rotC;
++            ap.mosaic = mosaic ? 1 : 0;
++            ap.accel = (drawPixel == &SoftRenderer::DrawPixel_Accel) ? 1 : 0;
++            ap.extpal = extpal ? 1 : 0; ap._pad = 0;
++            (void)curtile; (void)curpal; (void)color;
++            melonink_drawbg_affine(&ap);
++            CurUnit->BGXRefInternal[bgnum-2] += rotB;
++            CurUnit->BGYRefInternal[bgnum-2] += rotD;
++            return;
++        }
++#endif
++
+         for (int i = 0; i < 256; i++)
+         {
+             if (WindowMask[i] & (1<<bgnum))
+@@ -1457,6 +1639,30 @@ void SoftRenderer::DrawBG_Large(u32 line) // BG is always BG2
+ 
+     u8 color;
+ 
++#ifdef MELONINK
++    {
++        MeloninkBgAffineParams ap;
++        ap.bgvram = bgvram; ap.pal = pal;
++        ap.window_mask = WindowMask; ap.bgobj_line = BGOBJLine;
++        ap.mosaic_table = CurBGXMosaicTable;
++        for (int pi = 0; pi < 16; pi++) ap.extpal_ptrs[pi] = pal;
++        ap.bgvrammask = bgvrammask; ap.bgnum = 2;
++        ap.mode = MELONINK_BGA_LARGE_256;
++        ap.tileset_addr = 0; ap.tilemap_addr = 0;
++        ap.mask_x = xmask; ap.mask_y = ymask; ap.yshift = yshift;
++        ap.ovmask_x = ofxmask; ap.ovmask_y = ofymask;
++        ap.rot_x = rotX; ap.rot_y = rotY; ap.rot_a = rotA; ap.rot_c = rotC;
++        ap.mosaic = mosaic ? 1 : 0;
++        ap.accel = (drawPixel == &SoftRenderer::DrawPixel_Accel) ? 1 : 0;
++        ap.extpal = 0; ap._pad = 0;
++        (void)color;
++        melonink_drawbg_affine(&ap);
++        CurUnit->BGXRefInternal[0] += rotB;
++        CurUnit->BGYRefInternal[0] += rotD;
++        return;
++    }
++#endif
++
+     for (int i = 0; i < 256; i++)
+     {
+         if (WindowMask[i] & (1<<2))
+@@ -1723,6 +1929,31 @@ void SoftRenderer::DrawSprite_Rotscale(u32 num, u32 boundwidth, u32 boundheight,
      u32 objvrammask;
      CurUnit->GetOBJVRAM(objvram, objvrammask);
  
@@ -149,7 +326,7 @@ index 6ad2cd3e..fac534f6 100644
      u32* objLine = OBJLine[CurUnit->Num];
      u8* objWindow = OBJWindow[CurUnit->Num];
  
-@@ -1940,6 +2029,28 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
+@@ -1940,6 +2171,28 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
      u32 objvrammask;
      CurUnit->GetOBJVRAM(objvram, objvrammask);
  
