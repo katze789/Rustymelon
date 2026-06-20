@@ -72,6 +72,11 @@ scanline per call.
 | `GPU2D::SoftRenderer::DrawBG_Text` pixel loops | `GPU2D_Soft.cpp` | 256/16-colour text-BG drawing (mosaic + ext-palette + both DrawPixel variants). VRAM-bank setup (`GetBGVRAM`/`GetBGExtPal`) stays in C++; the 16 ext-palette pointers are precomputed and passed in. |
 | `GPU2D::SoftRenderer::DrawSprite_Normal` + `DrawSprite_Rotscale` | `GPU2D_Soft.cpp` | full sprite rendering: bitmap / 256-colour / 16-colour, normal + affine (rotscale), window sprites, both flips, mosaic. Writes raw indices to `OBJLine`/`OBJWindow` (palette lookup stays in C++ `InterleaveSprites`); VRAM coherency + OAM iteration stay in C++. |
 | `GPU2D::SoftRenderer::DrawBG_Affine` + `DrawBG_Extended` + `DrawBG_Large` | `GPU2D_Soft.cpp` | affine/extended/large background pixel loops (affine-tiled, extended bitmap direct/256-colour, extended mixed affine/text with ext-palette, large 256-colour). One Rust entry point dispatched by mode; the `BGxRefInternal` advance stays in C++. |
+| `GPU2D::SoftRenderer::InterleaveSprites` | `GPU2D_Soft.cpp` | resolves OBJ-line palette indices (incl. ext-palette / direct colour) and composites sprites into BGOBJLine. |
+| `GPU2D::SoftRenderer::DrawBG_3D` + `ApplySpriteMosaicX` | `GPU2D_Soft.cpp` | 3D-layer composite into the 2D line; sprite X-mosaic. |
+| `GPU2D::SoftRenderer::DoCapture` | `GPU2D_Soft.cpp` | display-capture pixel loops (source A / B / A+B blend); VRAM resolution + dirty-marking + the OpenGL-only composite stay in C++. |
+| `GPU3D::SoftRenderer::ScanlineFinalPass` (+ `CalculateFogDensity`) | `GPU3D_Soft.cpp` | the 3D final per-scanline pass: edge-marking, fog, anti-aliasing. |
+| `GPU3D::SoftRenderer::RenderShadowMaskScanline` | `GPU3D_Soft.cpp` | shadow-mask span loops (depth-test → stencil bits); reuses the ported `Interpolator<0>` and depth tests. |
 
 Each is exercised behind `#ifdef MELONINK` and verified per `VERIFICATION.md`.
 The per-scanline setup (slope/edge setup, Y-interpolation of span endpoints)

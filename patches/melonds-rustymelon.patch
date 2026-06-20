@@ -15,10 +15,10 @@ index 1f947d11..4c8d5ec9 100644
 +    target_link_libraries(core PRIVATE "${MELONINK_LIB}")
 +endif()
 diff --git a/src/GPU2D_Soft.cpp b/src/GPU2D_Soft.cpp
-index 6ad2cd3e..6f2f5536 100644
+index 6ad2cd3e..68b89fa0 100644
 --- a/src/GPU2D_Soft.cpp
 +++ b/src/GPU2D_Soft.cpp
-@@ -20,6 +20,60 @@
+@@ -20,6 +20,85 @@
  #include "GPU.h"
  #include "GPU3D.h"
  
@@ -68,6 +68,31 @@ index 6ad2cd3e..6f2f5536 100644
 +    melonDS::u8 mosaic, accel, extpal, _pad;
 +};
 +extern "C" void melonink_drawbg_affine(const MeloninkBgAffineParams* p);
++
++// Layout MUST match melonink::compose::InterleaveParams (repr(C)) exactly.
++struct MeloninkInterleaveParams {
++    const melonDS::u32* obj_line;
++    const melonDS::u16* pal;
++    const melonDS::u16* extpal;
++    const melonDS::u8* window_mask;
++    melonDS::u32* bgobj_line;
++    melonDS::u32 prio;
++    melonDS::u8 use_extpal, accel, _pad0, _pad1;
++};
++extern "C" void melonink_interleave_sprites(const MeloninkInterleaveParams* p);
++extern "C" void melonink_drawbg_3d(melonDS::u32* bgobj_line, const melonDS::u32* threed_line,
++    const melonDS::u8* window_mask, melonDS::u8 accelerated);
++extern "C" void melonink_apply_sprite_mosaic_x(melonDS::u32* obj_line, const melonDS::u8* mosaic_table);
++
++// Layout MUST match melonink::compose::CaptureParams (repr(C)) exactly.
++struct MeloninkCaptureParams {
++    melonDS::u16* dst;
++    const melonDS::u32* src_a;
++    const melonDS::u16* src_b;
++    melonDS::u32 dstaddr, src_baddr, width, mode, eva, evb;
++    melonDS::u8 has_srcb, _pad0, _pad1, _pad2;
++};
++extern "C" void melonink_do_capture(const MeloninkCaptureParams* p);
 +// rustymelon mode constants
 +#define MELONINK_BGA_AFFINE_TILED 0
 +#define MELONINK_BGA_EXT_BITMAP_DIRECT 1
@@ -79,7 +104,36 @@ index 6ad2cd3e..6f2f5536 100644
  namespace melonDS
  {
  namespace GPU2D
-@@ -741,6 +795,10 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -426,6 +505,28 @@ void SoftRenderer::DoCapture(u32 line, u32 width)
+     static_assert(VRAMDirtyGranularity == 512);
+     GPU.VRAMDirty[dstvram][(dstaddr * 2) / VRAMDirtyGranularity] = true;
+ 
++#ifdef MELONINK
++    {
++        u32 capeva = captureCnt & 0x1F;
++        u32 capevb = (captureCnt >> 8) & 0x1F;
++        if (capeva > 16) capeva = 16;
++        if (capevb > 16) capevb = 16;
++        MeloninkCaptureParams cp;
++        cp.dst = dst;
++        cp.src_a = srcA;
++        cp.src_b = srcB ? srcB : (const melonDS::u16*)dst;
++        cp.dstaddr = dstaddr;
++        cp.src_baddr = srcBaddr;
++        cp.width = width;
++        cp.mode = (captureCnt >> 29) & 0x3;
++        cp.eva = capeva; cp.evb = capevb;
++        cp.has_srcb = srcB ? 1 : 0;
++        cp._pad0 = 0; cp._pad1 = 0; cp._pad2 = 0;
++        melonink_do_capture(&cp);
++        return;
++    }
++#endif
++
+     switch ((captureCnt >> 29) & 0x3)
+     {
+     case 0: // source A
+@@ -741,6 +842,10 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  
      if (!GPU.GPU3D.IsRendererAccelerated())
      {
@@ -90,7 +144,7 @@ index 6ad2cd3e..6f2f5536 100644
          for (int i = 0; i < 256; i++)
          {
              u32 val1 = BGOBJLine[i];
-@@ -748,6 +806,7 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
+@@ -748,6 +853,7 @@ void SoftRenderer::DrawScanline_BGOBJ(u32 line)
  
              BGOBJLine[i] = ColorComposite(i, val1, val2);
          }
@@ -98,7 +152,19 @@ index 6ad2cd3e..6f2f5536 100644
      }
      else
      {
-@@ -962,6 +1021,31 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
+@@ -883,6 +989,11 @@ void SoftRenderer::DrawPixel_Accel(u32* dst, u16 color, u32 flag)
+ 
+ void SoftRenderer::DrawBG_3D()
+ {
++#ifdef MELONINK
++    melonink_drawbg_3d(BGOBJLine, _3DLine, WindowMask,
++        GPU.GPU3D.IsRendererAccelerated() ? 1 : 0);
++    return;
++#endif
+     int i = 0;
+ 
+     if (GPU.GPU3D.IsRendererAccelerated())
+@@ -962,6 +1073,31 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
      else
          tilemapaddr += ((yoff & 0xF8) << 3);
  
@@ -130,7 +196,7 @@ index 6ad2cd3e..6f2f5536 100644
      u16 curtile;
      u16* curpal;
      u32 pixelsaddr;
-@@ -1073,6 +1157,7 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
+@@ -1073,6 +1209,7 @@ void SoftRenderer::DrawBG_Text(u32 line, u32 bgnum)
              xoff++;
          }
      }
@@ -138,7 +204,7 @@ index 6ad2cd3e..6f2f5536 100644
  }
  
  template<bool mosaic, SoftRenderer::DrawPixel drawPixel>
-@@ -1136,6 +1221,30 @@ void SoftRenderer::DrawBG_Affine(u32 line, u32 bgnum)
+@@ -1136,6 +1273,30 @@ void SoftRenderer::DrawBG_Affine(u32 line, u32 bgnum)
  
      yshift -= 3;
  
@@ -169,7 +235,7 @@ index 6ad2cd3e..6f2f5536 100644
      for (int i = 0; i < 256; i++)
      {
          if (WindowMask[i] & (1<<bgnum))
-@@ -1241,6 +1350,30 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
+@@ -1241,6 +1402,30 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
  
              u16 color;
  
@@ -200,7 +266,7 @@ index 6ad2cd3e..6f2f5536 100644
              for (int i = 0; i < 256; i++)
              {
                  if (WindowMask[i] & (1<<bgnum))
-@@ -1280,6 +1413,30 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
+@@ -1280,6 +1465,30 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
  
              u8 color;
  
@@ -231,7 +297,7 @@ index 6ad2cd3e..6f2f5536 100644
              for (int i = 0; i < 256; i++)
              {
                  if (WindowMask[i] & (1<<bgnum))
-@@ -1350,6 +1507,31 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
+@@ -1350,6 +1559,31 @@ void SoftRenderer::DrawBG_Extended(u32 line, u32 bgnum)
  
          yshift -= 3;
  
@@ -263,7 +329,7 @@ index 6ad2cd3e..6f2f5536 100644
          for (int i = 0; i < 256; i++)
          {
              if (WindowMask[i] & (1<<bgnum))
-@@ -1457,6 +1639,30 @@ void SoftRenderer::DrawBG_Large(u32 line) // BG is always BG2
+@@ -1457,6 +1691,30 @@ void SoftRenderer::DrawBG_Large(u32 line) // BG is always BG2
  
      u8 color;
  
@@ -294,7 +360,43 @@ index 6ad2cd3e..6f2f5536 100644
      for (int i = 0; i < 256; i++)
      {
          if (WindowMask[i] & (1<<2))
-@@ -1723,6 +1929,31 @@ void SoftRenderer::DrawSprite_Rotscale(u32 num, u32 boundwidth, u32 boundheight,
+@@ -1509,6 +1767,11 @@ void SoftRenderer::ApplySpriteMosaicX()
+ 
+     u8* curOBJXMosaicTable = MosaicTable[CurUnit->OBJMosaicSize[0]].data();
+ 
++#ifdef MELONINK
++    melonink_apply_sprite_mosaic_x(objLine, curOBJXMosaicTable);
++    return;
++#endif
++
+     u32 lastcolor = objLine[0];
+ 
+     for (u32 i = 1; i < 256; i++)
+@@ -1528,6 +1791,23 @@ void SoftRenderer::InterleaveSprites(u32 prio)
+     u32* objLine = OBJLine[CurUnit->Num];
+     u16* pal = (u16*)&GPU.Palette[CurUnit->Num ? 0x600 : 0x200];
+ 
++#ifdef MELONINK
++    {
++        MeloninkInterleaveParams ip;
++        ip.obj_line = objLine;
++        ip.pal = pal;
++        ip.extpal = (CurUnit->DispCnt & 0x80000000) ? CurUnit->GetOBJExtPal() : pal;
++        ip.window_mask = WindowMask;
++        ip.bgobj_line = BGOBJLine;
++        ip.prio = prio;
++        ip.use_extpal = (CurUnit->DispCnt & 0x80000000) ? 1 : 0;
++        ip.accel = (drawPixel == &SoftRenderer::DrawPixel_Accel) ? 1 : 0;
++        ip._pad0 = 0; ip._pad1 = 0;
++        melonink_interleave_sprites(&ip);
++        return;
++    }
++#endif
++
+     if (CurUnit->DispCnt & 0x80000000)
+     {
+         u16* extpal = CurUnit->GetOBJExtPal();
+@@ -1723,6 +2003,31 @@ void SoftRenderer::DrawSprite_Rotscale(u32 num, u32 boundwidth, u32 boundheight,
      u32 objvrammask;
      CurUnit->GetOBJVRAM(objvram, objvrammask);
  
@@ -326,7 +428,7 @@ index 6ad2cd3e..6f2f5536 100644
      u32* objLine = OBJLine[CurUnit->Num];
      u8* objWindow = OBJWindow[CurUnit->Num];
  
-@@ -1940,6 +2171,28 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
+@@ -1940,6 +2245,28 @@ void SoftRenderer::DrawSprite_Normal(u32 num, u32 width, u32 height, s32 xpos, s
      u32 objvrammask;
      CurUnit->GetOBJVRAM(objvram, objvrammask);
  
@@ -356,10 +458,10 @@ index 6ad2cd3e..6f2f5536 100644
      u8* objWindow = OBJWindow[CurUnit->Num];
  
 diff --git a/src/GPU3D_Soft.cpp b/src/GPU3D_Soft.cpp
-index a9d0bd64..faf00e3c 100644
+index a9d0bd64..f6346517 100644
 --- a/src/GPU3D_Soft.cpp
 +++ b/src/GPU3D_Soft.cpp
-@@ -24,6 +24,40 @@
+@@ -24,6 +24,64 @@
  #include "NDS.h"
  #include "GPU.h"
  
@@ -395,12 +497,36 @@ index a9d0bd64..faf00e3c 100644
 +    melonDS::u32 poly_attr, poly_attr_full, tex_param, tex_palette, disp_cnt, alpha_ref;
 +};
 +extern "C" void melonink_render_spans(const MeloninkSpanParams* p);
++
++// Layout MUST match melonink::finalpass::FinalPassParams (repr(C)) exactly.
++struct MeloninkFinalPassParams {
++    melonDS::u32* color_buffer;
++    const melonDS::u32* depth_buffer;
++    melonDS::u32* attr_buffer;
++    const melonDS::u16* edge_table;
++    const melonDS::u8* fog_density_table;
++    melonDS::s32 buffer_size, scanline_width, first_pixel_offset, y;
++    melonDS::u32 disp_cnt, fog_color, fog_offset, fog_shift;
++};
++extern "C" void melonink_scanline_final_pass(const MeloninkFinalPassParams* p);
++
++// Layout MUST match melonink::rasterizer::ShadowSpanParams (repr(C)) exactly.
++struct MeloninkShadowSpanParams {
++    melonDS::u8* stencil_buffer;
++    const melonDS::u32* attr_buffer;
++    const melonDS::u32* depth_buffer;
++    melonDS::s32 buffer_size, scanline_width, first_pixel_offset, y;
++    melonDS::s32 xstart, xend, wl, wr, zl, zr;
++    melonDS::s32 l_edgelen, r_edgelen, yedge;
++    melonDS::u8 l_filledge, r_filledge, wireframe, wbuffer, depth_test_mode, _pad0, _pad1, _pad2;
++};
++extern "C" void melonink_render_shadow_spans(const MeloninkShadowSpanParams* p);
 +#endif
 +
  namespace melonDS
  {
  
-@@ -140,6 +174,11 @@ void SoftRenderer::SetThreaded(bool threaded, GPU& gpu) noexcept
+@@ -140,6 +198,11 @@ void SoftRenderer::SetThreaded(bool threaded, GPU& gpu) noexcept
  
  void SoftRenderer::TextureLookup(const GPU& gpu, u32 texparam, u32 texpal, s16 s, s16 t, u16* color, u8* alpha) const
  {
@@ -412,7 +538,7 @@ index a9d0bd64..faf00e3c 100644
      u32 vramaddr = (texparam & 0xFFFF) << 3;
  
      s32 width = 8 << ((texparam >> 20) & 0x7);
-@@ -369,6 +408,7 @@ void SoftRenderer::TextureLookup(const GPU& gpu, u32 texparam, u32 texpal, s16 s
+@@ -369,6 +432,7 @@ void SoftRenderer::TextureLookup(const GPU& gpu, u32 texparam, u32 texpal, s16 s
          }
          break;
      }
@@ -420,7 +546,7 @@ index a9d0bd64..faf00e3c 100644
  }
  
  // depth test is 'less or equal' instead of 'less than' under the following conditions:
-@@ -453,6 +493,12 @@ u32 SoftRenderer::AlphaBlend(const GPU3D& gpu3d, u32 srccolor, u32 dstcolor, u32
+@@ -453,6 +517,12 @@ u32 SoftRenderer::AlphaBlend(const GPU3D& gpu3d, u32 srccolor, u32 dstcolor, u32
  
  u32 SoftRenderer::RenderPixel(const GPU& gpu, const Polygon* polygon, u8 vr, u8 vg, u8 vb, s16 s, s16 t) const
  {
@@ -433,7 +559,7 @@ index a9d0bd64..faf00e3c 100644
      u8 r, g, b, a;
  
      u32 blendmode = (polygon->Attr >> 4) & 0x3;
-@@ -557,6 +603,7 @@ u32 SoftRenderer::RenderPixel(const GPU& gpu, const Polygon* polygon, u8 vr, u8
+@@ -557,6 +627,7 @@ u32 SoftRenderer::RenderPixel(const GPU& gpu, const Polygon* polygon, u8 vr, u8
      if (wireframe) a = 31;
  
      return r | (g << 8) | (b << 16) | (a << 24);
@@ -441,7 +567,46 @@ index a9d0bd64..faf00e3c 100644
  }
  
  void SoftRenderer::PlotTranslucentPixel(const GPU3D& gpu3d, u32 pixeladdr, u32 color, u32 z, u32 polyattr, u32 shadow)
-@@ -1090,6 +1137,49 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
+@@ -849,6 +920,38 @@ void SoftRenderer::RenderShadowMaskScanline(const GPU3D& gpu3d, RendererPolygon*
+     // for shadow masks: set stencil bits where the depth test fails.
+     // draw nothing.
+ 
++#ifdef MELONINK
++    {
++        melonDS::u8 dtmode;
++        if (polygon->Attr & (1<<14)) dtmode = polygon->WBuffer ? 1 : 0;
++        else if (polygon->FacingView) dtmode = 3;
++        else dtmode = 2;
++
++        MeloninkShadowSpanParams sp;
++        sp.stencil_buffer = StencilBuffer;
++        sp.attr_buffer = AttrBuffer;
++        sp.depth_buffer = DepthBuffer;
++        sp.buffer_size = BufferSize;
++        sp.scanline_width = ScanlineWidth;
++        sp.first_pixel_offset = FirstPixelOffset;
++        sp.y = y;
++        sp.xstart = xstart; sp.xend = xend;
++        sp.wl = wl; sp.wr = wr; sp.zl = zl; sp.zr = zr;
++        sp.l_edgelen = l_edgelen; sp.r_edgelen = r_edgelen; sp.yedge = yedge;
++        sp.l_filledge = l_filledge ? 1 : 0;
++        sp.r_filledge = r_filledge ? 1 : 0;
++        sp.wireframe = wireframe ? 1 : 0;
++        sp.wbuffer = polygon->WBuffer ? 1 : 0;
++        sp.depth_test_mode = dtmode;
++        sp._pad0 = 0; sp._pad1 = 0; sp._pad2 = 0;
++        (void)edge; (void)x; (void)xlimit; (void)interpX; (void)fnDepthTest;
++        melonink_render_shadow_spans(&sp);
++        rp->XL = rp->SlopeL.Step();
++        rp->XR = rp->SlopeR.Step();
++        return;
++    }
++#endif
++
+     // part 1: left edge
+     edge = yedge | 0x1;
+     xlimit = xstart+l_edgelen;
+@@ -1090,6 +1193,49 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
      else if (y == polygon->YBottom-1) yedge = 0x8;
      int edge;
  
@@ -491,7 +656,7 @@ index a9d0bd64..faf00e3c 100644
      s32 x = xstart;
      Interpolator<0> interpX(xstart, xend+1, wl, wr);
  
-@@ -1386,6 +1476,7 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
+@@ -1386,6 +1532,7 @@ void SoftRenderer::RenderPolygonScanline(const GPU& gpu, RendererPolygon* rp, s3
                  PlotTranslucentPixel(gpu.GPU3D, pixeladdr+BufferSize, color, z, polyattr, polygon->IsShadow);
          }
      }
@@ -499,3 +664,31 @@ index a9d0bd64..faf00e3c 100644
  
      rp->XL = rp->SlopeL.Step();
      rp->XR = rp->SlopeR.Step();
+@@ -1453,6 +1600,27 @@ void SoftRenderer::ScanlineFinalPass(const GPU3D& gpu3d, s32 y)
+     // clearing all polygon fog flags if the master flag isn't set?
+     // merging all final pass loops into one?
+ 
++#ifdef MELONINK
++    {
++        MeloninkFinalPassParams fp;
++        fp.color_buffer = ColorBuffer;
++        fp.depth_buffer = DepthBuffer;
++        fp.attr_buffer = AttrBuffer;
++        fp.edge_table = gpu3d.RenderEdgeTable;
++        fp.fog_density_table = gpu3d.RenderFogDensityTable;
++        fp.buffer_size = BufferSize;
++        fp.scanline_width = ScanlineWidth;
++        fp.first_pixel_offset = FirstPixelOffset;
++        fp.y = y;
++        fp.disp_cnt = gpu3d.RenderDispCnt;
++        fp.fog_color = gpu3d.RenderFogColor;
++        fp.fog_offset = gpu3d.RenderFogOffset;
++        fp.fog_shift = gpu3d.RenderFogShift;
++        melonink_scanline_final_pass(&fp);
++        return;
++    }
++#endif
++
+     if (gpu3d.RenderDispCnt & (1<<5))
+     {
+         // edge marking

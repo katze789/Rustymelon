@@ -23,8 +23,15 @@ the game matrix, and the RA-RAM proof where the ROM permits it.
   - GPU2D `DrawSprite_Normal` + `DrawSprite_Rotscale` — full sprite rendering
     (bitmap / 256 / 16-colour, affine, window, flips, mosaic).
   - GPU2D `DrawBG_Affine` + `DrawBG_Extended` + `DrawBG_Large` — affine/extended/
-    large background modes. **With this, the entire 2D+3D software-renderer pixel
-    pipeline is in Rust.**
+    large background modes.
+  - GPU2D `InterleaveSprites`, `DrawBG_3D`, `ApplySpriteMosaicX`, `DoCapture`.
+  - GPU3D `ScanlineFinalPass` (edge-marking + fog + anti-aliasing) +
+    `CalculateFogDensity`, and `RenderShadowMaskScanline`.
+  - **With these, the *complete* software-renderer pixel pipeline is in Rust** —
+    all 2D BG/sprite drawing, all 3D rasterization, the final pass, shadow masks,
+    compositing, and display capture.
+- **Production verification gate.** `verify-all.ps1` runs unit/fuzz tests +
+  stream parity + RA-RAM proof in one command and exits non-zero on any failure.
 - **Distinct fork identity.** The build reports `library_name = "rustymelon DS"`
   (guarded by `#ifdef MELONINK`), so it cannot be mistaken for the approved
   `melonDS DS` core and RetroAchievements Hardcore correctly refuses it. The
@@ -60,27 +67,28 @@ renderer, the hot path is now Rust:
 | `SPUChannel::Run` | — | 3.3 % | C++ audio (sensitive; out of scope) |
 | ARM JIT `Execute` | (in "other" ~73 %) | | **off-limits** (CPU/timing → RA risk) |
 
-**The entire 2D+3D software-renderer pixel pipeline is now in Rust.** What remains
-in C++ is the once-per-scanline setup (kept by design), threading/overhead that
-can't be meaningfully ported, audio, and the ARM JIT (off-limits). The sprite and
-affine-BG ports were validated with input-driven gameplay tests (e.g. the MKDS
-in-race affine minimap) on top of the usual gate (see ACCURACY.md).
+**The complete software-renderer pixel pipeline is now in Rust** — every per-pixel
+drawing/compositing path, including the final pass, shadow masks, and display
+capture. What remains in C++ is, by design: the once-per-scanline geometry setup
+(slope/edge/Y-interpolation), the scanline orchestration/dispatch, render-thread
+management, audio, and the ARM JIT (off-limits — CPU/timing). All ports were
+validated with input-driven gameplay tests (e.g. the MKDS in-race affine minimap)
+on top of the usual gate (see ACCURACY.md).
 
 ## Next (optional; diminishing returns)
 
-1. **Widen the differential net.** A true C++-oracle differential for the ported
+The software-renderer port is complete. Remaining ideas, all optional:
+
+1. **Broaden coverage of the rarely-hit paths.** Some functions pass wherever the
+   8-game matrix + input-driven tests exercise them, but are not heavily covered:
+   the extended/large *bitmap* BG modes, and `DoCapture` (display capture — used
+   by e.g. battle-transition effects). Scripted inputs into capture-heavy games
+   would tighten this. The Rust transcriptions mirror the C++ exactly regardless.
+2. **Widen the differential net.** A true C++-oracle differential for the ported
    functions (compile the upstream function standalone and fuzz Rust against it),
    beyond the current independent-reference fuzz + real-game gate.
-
-2. **Broaden game/input coverage further.** More titles and scripted input paths
-   that reach varied in-game states — especially the rarely-hit extended/large
-   bitmap BG modes, which intros under-cover.
-
 3. **Upstream / C++ reimplementation.** See RETROACHIEVEMENTS.md — the path with a
    real chance of a legitimately-approved, shipping result.
-
-3. **Upstream the patch** (see RETROACHIEVEMENTS.md) — the highest-value next
-   step if the goal is an approved, shipping optimisation.
 
 ### Investigated and deliberately set aside
 

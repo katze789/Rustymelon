@@ -34,10 +34,21 @@ Ported to Rust so far (each bit-identical to upstream, verified — see below):
 | 3D texture sampling | `GPU3D::SoftRenderer::TextureLookup` (all 8 NDS formats) |
 | 3D pixel shading | `GPU3D::SoftRenderer::RenderPixel` |
 | 3D rasterizer span loop | `RenderPolygonScanline` per-pixel loops + interpolator, depth tests, alpha blend, translucent plot |
+| 3D final pass | `ScanlineFinalPass` (edge-marking, fog, anti-aliasing) + `CalculateFogDensity` |
+| 3D shadow masks | `RenderShadowMaskScanline` |
+| sprite/3D compositing | `InterleaveSprites`, `DrawBG_3D`, `ApplySpriteMosaicX` |
+| display capture | `DoCapture` |
 
-**The entire 2D and 3D software-renderer pixel pipeline is now in Rust.** What
-remains in C++ is non-rendering (CPU JIT, audio, threading) or by-design
-per-scanline setup.
+Also ported: `InterleaveSprites`, `DrawBG_3D`, `ApplySpriteMosaicX`, the 3D
+`ScanlineFinalPass` (edge-marking, fog, anti-aliasing), `RenderShadowMaskScanline`,
+and `DoCapture`.
+
+**The complete software-renderer pixel pipeline is now in Rust.** What remains in
+C++ is, by design: the per-scanline geometry setup (slope/edge setup,
+Y-interpolation), the scanline orchestration/dispatch, the render-thread
+management, and everything outside the renderer — the ARM CPU JIT, audio (SPU),
+scheduler, DMA, timers, memory — which is deliberately untouched because changing
+CPU/timing would break accuracy and RetroAchievements.
 
 **Performance** (median, stable clocks, on an i5-8250U laptop): all test games
 improve, with notably smoother frame pacing — e.g. MKDS +13.5 % (P99 frame time
@@ -104,6 +115,11 @@ To build the **unmodified baseline** for comparison, configure without
 # copy and edit paths first
 cp benchmarks/suite.cfg.example benchmarks/suite.cfg
 
+# one-command production gate: unit/fuzz tests + stream parity + RA-RAM proof.
+# Exits non-zero on any failure (use as a CI / pre-release gate).
+pwsh ./verify-all.ps1
+
+# or the individual pieces:
 # must print IDENTICAL for every game (exit 0)
 melonbench suite --verify --frames 900 --cores original,rusty
 

@@ -670,3 +670,126 @@ pub unsafe extern "C" fn melonink_render_spans(p: *const SpanParams) {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Shadow-mask scanline (RenderShadowMaskScanline). Same setup/structure as the
+// polygon span loops, but the inner work only depth-tests and sets stencil
+// bits — no drawing. Reuses InterpX and depth_test above.
+// ---------------------------------------------------------------------------
+
+#[repr(C)]
+pub struct ShadowSpanParams {
+    pub stencil_buffer: *mut u8,
+    pub attr_buffer: *const u32,
+    pub depth_buffer: *const u32,
+    pub buffer_size: i32,
+    pub scanline_width: i32,
+    pub first_pixel_offset: i32,
+    pub y: i32,
+    pub xstart: i32,
+    pub xend: i32,
+    pub wl: i32,
+    pub wr: i32,
+    pub zl: i32,
+    pub zr: i32,
+    pub l_edgelen: i32,
+    pub r_edgelen: i32,
+    pub yedge: i32,
+    pub l_filledge: u8,
+    pub r_filledge: u8,
+    pub wireframe: u8,
+    pub wbuffer: u8,
+    pub depth_test_mode: u8,
+    pub _pad0: u8,
+    pub _pad1: u8,
+    pub _pad2: u8,
+}
+
+/// # Safety
+/// stencil valid for 512 bytes; attr/depth for `buffer_size*2` u32 each.
+#[no_mangle]
+pub unsafe extern "C" fn melonink_render_shadow_spans(p: *const ShadowSpanParams) {
+    let p = &*p;
+    let bsz = p.buffer_size as usize;
+    let attr = core::slice::from_raw_parts(p.attr_buffer, bsz * 2);
+    let depth = core::slice::from_raw_parts(p.depth_buffer, bsz * 2);
+    let stencil = core::slice::from_raw_parts_mut(p.stencil_buffer, 512);
+    let buffer_size = bsz;
+    let scanline_base = (p.first_pixel_offset + p.y * p.scanline_width) as usize;
+    let stencil_row = 256 * ((p.y & 0x1) as usize);
+    let wbuffer = p.wbuffer != 0;
+    let wireframe = p.wireframe != 0;
+    let dtmode = p.depth_test_mode;
+
+    let mut interp = InterpX::new(p.xstart, p.xend + 1, p.wl, p.wr);
+    let mut x = p.xstart;
+    if x < 0 {
+        x = 0;
+    }
+
+    // One pixel of shadow-mask work: depth-test top (and the pushed-down pixel
+    // if antialiased), setting stencil bits exactly as the C++ does.
+    let mut shadow_px = |x: i32| {
+        let mut pixeladdr = scanline_base + x as usize;
+        interp.set_x(x);
+        let z = interp.interpolate_z(p.zl, p.zr, wbuffer);
+        let dstattr = attr[pixeladdr];
+        if !depth_test(dtmode, depth[pixeladdr] as i32, z, dstattr) {
+            stencil[stencil_row + x as usize] = 1;
+        }
+        if dstattr & 0xF != 0 {
+            pixeladdr += buffer_size;
+            if !depth_test(dtmode, depth[pixeladdr] as i32, z, attr[pixeladdr]) {
+                stencil[stencil_row + x as usize] |= 0x2;
+            }
+        }
+    };
+
+    // part 1: left edge
+    let mut xlimit = p.xstart + p.l_edgelen;
+    if xlimit > p.xend + 1 {
+        xlimit = p.xend + 1;
+    }
+    if xlimit > 256 {
+        xlimit = 256;
+    }
+    if p.l_filledge == 0 {
+        x = xlimit;
+    } else {
+        while x < xlimit {
+            shadow_px(x);
+            x += 1;
+        }
+    }
+
+    // part 2: polygon inside
+    xlimit = p.xend - p.r_edgelen + 1;
+    if xlimit > p.xend + 1 {
+        xlimit = p.xend + 1;
+    }
+    if xlimit > 256 {
+        xlimit = 256;
+    }
+    if wireframe && p.yedge == 0 {
+        if x < xlimit {
+            x = xlimit;
+        }
+    } else {
+        while x < xlimit {
+            shadow_px(x);
+            x += 1;
+        }
+    }
+
+    // part 3: right edge
+    xlimit = p.xend + 1;
+    if xlimit > 256 {
+        xlimit = 256;
+    }
+    if p.r_filledge != 0 {
+        while x < xlimit {
+            shadow_px(x);
+            x += 1;
+        }
+    }
+}

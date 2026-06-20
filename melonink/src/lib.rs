@@ -28,7 +28,9 @@ extern "C" fn rust_eh_personality() {}
 
 mod bg;
 mod bg_affine;
+mod compose;
 mod composite;
+mod finalpass;
 mod rasterizer;
 mod renderpixel;
 mod simd;
